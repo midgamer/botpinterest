@@ -22,6 +22,9 @@ COPY . .
 RUN mkdir -p /app/data /app/logs \
     /app/app/images/generated /app/app/images/charts
 
+# DEBUG: проверяем структуру и импорт app
+RUN echo "=== PY FILES ===" && ls /app/*.py && echo "=== APP DIR ===" && ls -la /app/app/ && echo "=== BOT DIR ===" && ls /app/app/bot/handlers/ && echo "=== TRY IMPORT ===" && python -c "import sys; sys.path.insert(0,'/app'); from app.bot.handlers import start; print('IMPORT OK')" 2>&1 || echo "IMPORT FAILED"
+
 EXPOSE 3000
 
 CMD ["python", "server.py"]
