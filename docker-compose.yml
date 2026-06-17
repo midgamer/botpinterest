@@ -1,106 +1,53 @@
-from pathlib import Path
+version: '3.8'
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: beauty_bot
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/beauty_bot
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./logs:/app/logs
+      - ./app/images/generated:/app/app/images/generated
 
-from app.utils.helpers import slugify
+  db:
+    image: postgres:15-alpine
+    container_name: beauty_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: beauty_bot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: beauty_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
 
-class ImageProcessor:
-    CANVAS_SIZE = (1000, 1500)
-    FONT_PATH = None
-
-    def __init__(self):
-        self._try_load_font()
-
-    def _try_load_font(self):
-        possible_paths = [
-            "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/seguiemj.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-        ]
-        for p in possible_paths:
-            path = Path(p)
-            if path.exists():
-                self.FONT_PATH = str(path)
-                return
-
-    def create_text_overlay(
-        self,
-        background_path: str,
-        title: str,
-        output_name: str = "overlay",
-    ) -> str:
-        img = Image.open(background_path).convert("RGB")
-        img = img.resize(self.CANVAS_SIZE, Image.LANCZOS)
-        overlay = Image.new("RGBA", self.CANVAS_SIZE, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-
-        draw.rectangle([(0, 900), (1000, 1500)], fill=(0, 0, 0, 180))
-
-        font = None
-        if self.FONT_PATH:
-            try:
-                font = ImageFont.truetype(self.FONT_PATH, 48)
-            except Exception:
-                font = ImageFont.load_default()
-
-        lines = self._wrap_text(title, font, 900)
-        y = 960
-        for line in lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            x = (1000 - (bbox[2] - bbox[0])) // 2
-            draw.text((x, y), line, fill="white", font=font)
-            y += 60
-
-        img = Image.alpha_composite(img.convert("RGBA"), overlay)
-        output_dir = Path("app/images/generated")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{slugify(output_name)}.png"
-        img.save(output_path, "PNG")
-        return str(output_path)
-
-    def apply_aesthetic_filter(self, image_path: str) -> str:
-        img = Image.open(image_path)
-        img = img.filter(ImageFilter.GaussianBlur(radius=1))
-        img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150))
-        path = Path(image_path)
-        output_path = path.parent / f"{path.stem}_filtered{path.suffix}"
-        img.save(output_path)
-        return str(output_path)
-
-    def _wrap_text(self, text: str, font, max_width: int) -> list[str]:
-        if not font:
-            return [text]
-        words = text.split()
-        lines = []
-        current_line = ""
-        for word in words:
-            test_line = f"{current_line} {word}".strip()
-            bbox = font.getbbox(test_line)
-            if bbox and (bbox[2] - bbox[0]) <= max_width:
-                current_line = test_line
-            else:
-                if current_line:
-                    lines.append(current_line)
-                current_line = word
-        if current_line:
-            lines.append(current_line)
-        return lines or [text]
-
-    def create_collage(self, image_paths: list[str], output_name: str = "collage") -> str:
-        if not image_paths:
-            return ""
-        images = [Image.open(p).convert("RGB").resize((500, 750), Image.LANCZOS) for p in image_paths[:4]]
-        cols = 2
-        rows = (len(images) + 1) // 2
-        collage = Image.new("RGB", (1000, 750 * rows))
-        for i, img in enumerate(images):
-            x = (i % cols) * 500
-            y = (i // cols) * 750
-            collage.paste(img, (x, y))
-        output_dir = Path("app/images/generated")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{slugify(output_name)}.png"
-        collage.save(output_path)
-        return str(output_path)
+volumes:
+  pgdata:
+  redisdata:
