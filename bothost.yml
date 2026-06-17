@@ -1,3 +1,0 @@
-dockerfile: Dockerfile
-requirements: requirements.txt
-build_method: pip

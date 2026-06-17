@@ -1,26 +1,46 @@
-FROM python:3.11-slim
+from app.analytics.collector import AnalyticsCollector
+from app.bot.services.pinterest import PinterestService
+from app.database.repository import SettingRepository
+from app.utils.config import config
+from app.utils.logger import logger
 
-WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    DATA_DIR=/app/data
+class ScheduledJobs:
+    def __init__(self, session_factory):
+        self.session_factory = session_factory
+        self.owner_id = config.owner_id
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libpq-dev && \
-    rm -rf /var/lib/apt/lists/*
+    async def auto_post_to_pinterest(self):
+        logger.info("Running scheduled auto-post to Pinterest")
+        async with self.session_factory() as session:
+            settings_repo = SettingRepository(session)
+            pinterest = PinterestService(session)
+            settings = await settings_repo.get_or_create(self.owner_id)
+            if not settings.auto_posting_enabled:
+                logger.info("Auto-posting disabled, skipping")
+                return
+            result = await pinterest.create_and_publish_pin(self.owner_id)
+            if result:
+                logger.info("Auto-posted pin successfully")
+            else:
+                logger.warning("Auto-post: no content available to publish")
 
-COPY requirements.txt .
-RUN grep -v '^from ' requirements.txt | grep -v '^import ' > /tmp/req_clean.txt \
-    && mv /tmp/req_clean.txt requirements.txt \
-    && pip install --no-cache-dir -r requirements.txt
+    async def collect_analytics(self):
+        logger.info("Running scheduled analytics collection")
+        async with self.session_factory() as session:
+            collector = AnalyticsCollector(session)
+            count = await collector.collect_all_pins_stats(self.owner_id)
+            logger.info(f"Collected analytics for {count} pins")
 
-COPY . .
+    async def discover_trends(self):
+        logger.info("Running scheduled trend discovery")
+        from app.ai.trend_analyzer import TrendAnalyzer
 
-RUN mkdir -p /app/data /app/logs \
-    /app/app/images/generated /app/app/images/charts
-
-EXPOSE 3000
-
-CMD ["python", "server.py"]
+        analyzer = TrendAnalyzer()
+        for category in ["skincare", "makeup", "self-care", "beauty hacks"]:
+            try:
+                trends = await analyzer.analyze_trends(category, "USA")
+                trend_count = len(trends.get("trends", []))
+                logger.info(f"Trends for {category}: {trend_count} trends found")
+            except Exception as e:
+                logger.error(f"Failed to discover trends for {category}: {e}")
